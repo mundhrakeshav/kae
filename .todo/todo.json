@@ -1,0 +1,14 @@
+[
+  {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "Write report",
+    "description": "Complete the annual report",
+    "status": "Todo"
+  },
+  {
+    "id": "123e4567-e89b-12d3-a456-426614174001",
+    "name": "Review code",
+    "description": "Check team’s pull request",
+    "status": "InProgress"
+  }
+]
