@@ -1,5 +1,5 @@
 use crate::style;
-use crate::task::{Task, TaskList, TaskStatus};
+use crate::task::{ListMode, Task, TaskList, TaskStatus};
 use anyhow::{Ok, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::buffer::Buffer;
@@ -11,9 +11,17 @@ use ratatui::widgets::{
 };
 use ratatui::{symbols, DefaultTerminal};
 use ratatui::{text::Line, widgets::ListItem};
+
+#[derive(Debug)]
+enum UIMode {
+    View,
+    Insert,
+}
+
 pub struct UI {
     task_list: TaskList,
     should_exit: bool,
+    mode: UIMode,
 }
 
 impl UI {
@@ -21,10 +29,12 @@ impl UI {
         let task_list = TaskList {
             tasks: tasks,
             state: ListState::default(),
+            mode: ListMode::View,
         };
         Self {
             task_list,
             should_exit: false,
+            mode: UIMode::View,
         }
     }
 
@@ -43,15 +53,15 @@ impl UI {
             return;
         }
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
-            KeyCode::Char('h') | KeyCode::Left => self.select_none(),
-            KeyCode::Char('j') | KeyCode::Down => self.select_next(),
-            KeyCode::Char('k') | KeyCode::Up => self.select_previous(),
-            KeyCode::Char('g') | KeyCode::Home => self.select_first(),
-            KeyCode::Char('G') | KeyCode::End => self.select_last(),
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
-                self.toggle_status();
-            }
+            KeyCode::Char('q') => self.should_exit = true,
+            KeyCode::Char('i') => self.mode = UIMode::Insert,
+            KeyCode::Esc => self.mode = UIMode::View,
+            KeyCode::Left => self.select_none(),
+            KeyCode::Down => self.select_next(),
+            KeyCode::Up => self.select_previous(),
+            KeyCode::Home => self.select_first(),
+            KeyCode::End => self.select_last(),
+            KeyCode::Tab => self.toggle_status(),
             _ => {}
         }
     }
@@ -90,13 +100,24 @@ impl UI {
         Paragraph::new("KAE").bold().centered().render(area, buf);
     }
 
-    fn render_footer(area: Rect, buf: &mut Buffer) {
-        Paragraph::new("Use ↓↑ to move, ← to unselect, → to change status, g/G to go top/bottom.")
-            .centered()
-            .render(area, buf);
+    fn render_footer(&mut self, area: Rect, buf: &mut Buffer) {
+        let s = "Use ↓↑ to move, ← to unselect, 'TAB' to change status, 'q' to exit";
+        let text = match self.mode {
+            UIMode::View => format!("{} | mode: {} ", s, "VIEW"),
+            UIMode::Insert => format!("{} | mode: {} ", s, "INSERT"),
+        };
+
+        Paragraph::new(text).centered().render(area, buf);
     }
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
+        let [list_area, item_area] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Fill(3)]).areas(area);
+        self.render_list_titles(list_area, buf);
+        self.render_selected_item(item_area, buf);
+    }
+
+    fn render_list_titles(&mut self, area: Rect, buf: &mut Buffer) {
         let block = Block::new()
             .title(Line::raw("TODO List").centered())
             .borders(Borders::TOP)
@@ -169,13 +190,9 @@ impl Widget for &mut UI {
         ])
         .areas(area);
 
-        let [list_area, item_area] =
-            Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(main_area);
-
         UI::render_header(header_area, buf);
-        UI::render_footer(footer_area, buf);
-        self.render_list(list_area, buf);
-        self.render_selected_item(item_area, buf);
+        self.render_footer(footer_area, buf);
+        self.render_list(main_area, buf);
     }
 }
 

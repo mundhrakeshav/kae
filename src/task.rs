@@ -23,9 +23,15 @@ pub struct Task {
     pub status: TaskStatus,
 }
 
+pub enum ListMode {
+    View,
+    Modify,
+}
+
 pub struct TaskList {
     pub tasks: Vec<Task>,
     pub state: ListState,
+    pub mode: ListMode,
 }
 
 impl Task {

@@ -31,7 +31,6 @@ fn handle_command(cmd: args::Commands) -> Result<()> {
         }
         args::Commands::Add { name, description } => Ok(()),
         args::Commands::List { name, all, id } => {
-            print!("{:?}, {}, {:?}", name, all, id);
             let tasks = Task::from_file(utils::CONFIG_PATH)?;
             ui::UI::new(tasks)
                 .run(ratatui::init())
