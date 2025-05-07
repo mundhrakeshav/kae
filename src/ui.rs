@@ -8,10 +8,12 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::{
     Block, Borders, HighlightSpacing, List, ListState, Padding, Paragraph, StatefulWidget, Widget,
     Wrap,
+    
 };
 use ratatui::{symbols, DefaultTerminal};
 use ratatui::{text::Line, widgets::ListItem};
 use serde_json;
+use tracing;
 
 #[derive(Debug, PartialEq)]
 enum UIMode {
@@ -152,7 +154,10 @@ impl UI {
 
     fn toggle_status_and_save(&mut self) {
         self.toggle_status();
-        self.save_tasks();
+        if let Err(e) = self.save_tasks() {
+            tracing::error!("Failed to save tasks after toggling status: {}", e);
+            // Consider setting a status message for the user in the UI here
+        }
     }
 
     fn confirm_edit_and_save(&mut self) {
@@ -166,7 +171,10 @@ impl UI {
                 }
                 ActiveEditField::None => {}
             }
-            self.save_tasks();
+            if let Err(e) = self.save_tasks() {
+                tracing::error!("Failed to save tasks after confirming edit: {}", e);
+                // Consider setting a status message for the user in the UI here
+            }
         }
     }
 
@@ -231,24 +239,35 @@ impl UI {
 
     fn render_selected_item(&self, area: Rect, buf: &mut Buffer) {
         let block_title = Line::raw("TODO Info").centered();
-        let mut current_name = "Nothing selected...".to_string();
-        let mut current_description = "".to_string();
-        let mut current_status_prefix = "".to_string();
+        let block: Block<'_> = Block::new()
+            .title(block_title)
+            .borders(Borders::TOP)
+            .border_set(symbols::border::EMPTY)
+            .border_style(style::TODO_HEADER_STYLE)
+            .bg(style::NORMAL_ROW_BG)
+            .padding(Padding::horizontal(1));
 
-        if let Some(i) = self.task_list.state.selected() {
-            let task = &self.task_list.tasks[i];
-            current_name = task.name.clone();
-            current_description = task.description.clone();
-            current_status_prefix = match task.status {
-                TaskStatus::Done => "✓ DONE".to_string(),
-                TaskStatus::Todo => "☐ TODO".to_string(),
-                TaskStatus::InProgress => "◌ IN PROGRESS".to_string(),
-            };
+        if self.task_list.state.selected().is_none() {
+            Paragraph::new("Nothing selected...")
+                .block(block.clone())
+                .fg(style::TEXT_FG_COLOR)
+                .centered()
+                .render(area, buf);
+            return;
         }
+
+        let i = self.task_list.state.selected().unwrap();
+        let task = &self.task_list.tasks[i];
+        let current_name = task.name.clone();
+        let current_description = task.description.clone();
+        let current_status_prefix = match task.status {
+            TaskStatus::Done => "✓ DONE".to_string(),
+            TaskStatus::Todo => "☐ TODO".to_string(),
+            TaskStatus::InProgress => "◌ IN PROGRESS".to_string(),
+        };
 
         let mut text_to_display = vec![];
 
-        // Name display/edit
         if self.mode == UIMode::EditName && self.active_edit_field == ActiveEditField::Name {
             text_to_display.push(Line::styled(
                 format!("Name: {}_", self.input_buffer),
@@ -261,7 +280,6 @@ impl UI {
             ));
         }
 
-        // Description display/edit
         if self.mode == UIMode::EditDescription && self.active_edit_field == ActiveEditField::Description {
             text_to_display.push(Line::styled(
                 format!("Description: {}_", self.input_buffer),
@@ -274,22 +292,10 @@ impl UI {
             ));
         }
         
-        // Status (always view only in this pane)
-        if self.task_list.state.selected().is_some() {
-             text_to_display.push(Line::styled(
-                format!("Status: {}", current_status_prefix),
-                Style::default().fg(style::TEXT_FG_COLOR),
-            ));
-        }
-
-
-        let block = Block::new()
-            .title(block_title)
-            .borders(Borders::TOP)
-            .border_set(symbols::border::EMPTY)
-            .border_style(style::TODO_HEADER_STYLE)
-            .bg(style::NORMAL_ROW_BG)
-            .padding(Padding::horizontal(1));
+        text_to_display.push(Line::styled(
+            format!("Status: {}", current_status_prefix),
+            Style::default().fg(style::TEXT_FG_COLOR),
+        ));
 
         Paragraph::new(text_to_display)
             .block(block)
