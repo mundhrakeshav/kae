@@ -38,6 +38,42 @@ fn handle_command(cmd: args::Commands) -> Result<()> {
 
             Ok(())
         }
+        args::Commands::Update {
+            id,
+            name,
+            description,
+            status,
+        } => {
+            let mut tasks = Task::from_file(utils::CONFIG_PATH)?;
+            if let Some(task_to_update) = tasks.iter_mut().find(|t| t.id == id) {
+                if let Some(n) = name {
+                    task_to_update.name = n;
+                }
+                if let Some(d) = description {
+                    task_to_update.description = d;
+                }
+                if let Some(s) = status {
+                    match s.to_lowercase().as_str() {
+                        "todo" => task_to_update.status = task::TaskStatus::Todo,
+                        "inprogress" => task_to_update.status = task::TaskStatus::InProgress,
+                        "done" => task_to_update.status = task::TaskStatus::Done,
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "Invalid status: {}. Must be one of Todo, InProgress, Done",
+                                s
+                            ));
+                        }
+                    }
+                }
+            } else {
+                return Err(anyhow::anyhow!("Task with ID {} not found", id));
+            }
+
+            let updated_tasks_json = serde_json::to_string_pretty(&tasks)?;
+            utils::write_todos_to(utils::CONFIG_PATH, updated_tasks_json)?;
+            tracing::info!("Task {} updated successfully.", id);
+            Ok(())
+        }
         _ => Ok(()),
     }
 }

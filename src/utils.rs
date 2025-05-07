@@ -36,3 +36,20 @@ pub fn init_todos() -> Result<()> {
 pub fn read_todos_from(path: &str) -> Result<String> {
     Ok(fs::read_to_string(path)?)
 }
+
+pub fn write_todos_to(path: &str, tasks_json: String) -> Result<()> {
+    let mut f = File::options()
+        .write(true)
+        .truncate(true) // Overwrite the file if it exists
+        .create(true) // Create if it doesn't exist
+        .open(path)?;
+
+    if let Err(e) = f.write_all(tasks_json.as_bytes()) {
+        tracing::error!("error while writing to file, err: {}", e);
+        return Err(anyhow!("error while writing to file, err: {}", e));
+    };
+
+    f.flush()?;
+
+    Ok(())
+}

@@ -29,5 +29,18 @@ pub enum Commands {
     /// Remove an existing item.
     Remove {},
     /// Update an existing item.
-    Update {},
+    Update {
+        /// ID of the todo to update
+        #[arg(short, long)]
+        id: Uuid,
+        /// New name for the todo
+        #[arg(long)]
+        name: Option<String>,
+        /// New description for the todo
+        #[arg(long)]
+        description: Option<String>,
+        /// New status for the todo (Todo, InProgress, Done)
+        #[arg(long)]
+        status: Option<String>,
+    },
 }

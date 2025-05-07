@@ -4,24 +4,36 @@ use anyhow::{Ok, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::{
     Block, Borders, HighlightSpacing, List, ListState, Padding, Paragraph, StatefulWidget, Widget,
     Wrap,
 };
 use ratatui::{symbols, DefaultTerminal};
 use ratatui::{text::Line, widgets::ListItem};
+use serde_json;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum UIMode {
     View,
     Insert,
+    EditName,
+    EditDescription,
+}
+
+#[derive(Debug, PartialEq)]
+enum ActiveEditField {
+    None,
+    Name,
+    Description,
 }
 
 pub struct UI {
     task_list: TaskList,
     should_exit: bool,
     mode: UIMode,
+    input_buffer: String,
+    active_edit_field: ActiveEditField,
 }
 
 impl UI {
@@ -35,6 +47,8 @@ impl UI {
             task_list,
             should_exit: false,
             mode: UIMode::View,
+            input_buffer: String::new(),
+            active_edit_field: ActiveEditField::None,
         }
     }
 
@@ -52,17 +66,58 @@ impl UI {
         if key.kind != KeyEventKind::Press {
             return;
         }
-        match key.code {
-            KeyCode::Char('q') => self.should_exit = true,
-            KeyCode::Char('i') => self.mode = UIMode::Insert,
-            KeyCode::Esc => self.mode = UIMode::View,
-            KeyCode::Left => self.select_none(),
-            KeyCode::Down => self.select_next(),
-            KeyCode::Up => self.select_previous(),
-            KeyCode::Home => self.select_first(),
-            KeyCode::End => self.select_last(),
-            KeyCode::Tab => self.toggle_status(),
-            _ => {}
+
+        match self.mode {
+            UIMode::View => match key.code {
+                KeyCode::Char('q') => self.should_exit = true,
+                KeyCode::Char('i') => self.mode = UIMode::Insert,
+                KeyCode::Char('e') => {
+                    if let Some(selected_index) = self.task_list.state.selected() {
+                        self.mode = UIMode::EditName;
+                        self.active_edit_field = ActiveEditField::Name;
+                        self.input_buffer = self.task_list.tasks[selected_index].name.clone();
+                    }
+                }
+                KeyCode::Char('d') => {
+                    if let Some(selected_index) = self.task_list.state.selected() {
+                        self.mode = UIMode::EditDescription;
+                        self.active_edit_field = ActiveEditField::Description;
+                        self.input_buffer = self.task_list.tasks[selected_index].description.clone();
+                    }
+                }
+                KeyCode::Esc => self.mode = UIMode::View,
+                KeyCode::Left => self.select_none(),
+                KeyCode::Down => self.select_next(),
+                KeyCode::Up => self.select_previous(),
+                KeyCode::Home => self.select_first(),
+                KeyCode::End => self.select_last(),
+                KeyCode::Tab => self.toggle_status_and_save(),
+                _ => {}
+            },
+            UIMode::Insert => match key.code {
+                KeyCode::Esc => self.mode = UIMode::View,
+                _ => {}
+            },
+            UIMode::EditName | UIMode::EditDescription => match key.code {
+                KeyCode::Char(c) => {
+                    self.input_buffer.push(c);
+                }
+                KeyCode::Backspace => {
+                    self.input_buffer.pop();
+                }
+                KeyCode::Enter => {
+                    self.confirm_edit_and_save();
+                    self.mode = UIMode::View;
+                    self.active_edit_field = ActiveEditField::None;
+                    self.input_buffer.clear();
+                }
+                KeyCode::Esc => {
+                    self.mode = UIMode::View;
+                    self.active_edit_field = ActiveEditField::None;
+                    self.input_buffer.clear();
+                }
+                _ => {}
+            },
         }
     }
 
@@ -85,15 +140,40 @@ impl UI {
         self.task_list.state.select_last();
     }
 
-    /// Changes the status of the selected list item
     fn toggle_status(&mut self) {
         if let Some(i) = self.task_list.state.selected() {
             self.task_list.tasks[i].status = match self.task_list.tasks[i].status {
                 TaskStatus::Todo => TaskStatus::InProgress,
                 TaskStatus::InProgress => TaskStatus::Done,
                 TaskStatus::Done => TaskStatus::Todo,
-            }
+            };
         }
+    }
+
+    fn toggle_status_and_save(&mut self) {
+        self.toggle_status();
+        self.save_tasks();
+    }
+
+    fn confirm_edit_and_save(&mut self) {
+        if let Some(selected_index) = self.task_list.state.selected() {
+            match self.active_edit_field {
+                ActiveEditField::Name => {
+                    self.task_list.tasks[selected_index].name = self.input_buffer.clone();
+                }
+                ActiveEditField::Description => {
+                    self.task_list.tasks[selected_index].description = self.input_buffer.clone();
+                }
+                ActiveEditField::None => {}
+            }
+            self.save_tasks();
+        }
+    }
+
+    fn save_tasks(&self) -> Result<()> {
+        let tasks_json = serde_json::to_string_pretty(&self.task_list.tasks)?;
+        crate::utils::write_todos_to(crate::utils::CONFIG_PATH, tasks_json)?;
+        Ok(())
     }
 
     fn render_header(area: Rect, buf: &mut Buffer) {
@@ -101,10 +181,14 @@ impl UI {
     }
 
     fn render_footer(&mut self, area: Rect, buf: &mut Buffer) {
-        let s = "Use ↓↑ to move, ← to unselect, 'TAB' to change status, 'q' to exit";
+        let view_s = "Use ↓↑ to move, ← to unselect, TAB to change status, 'e' to edit name, 'd' to edit description, 'q' to exit";
+        let edit_s = "Type to edit, Enter to save, Esc to cancel";
+
         let text = match self.mode {
-            UIMode::View => format!("{} | mode: {} ", s, "VIEW"),
-            UIMode::Insert => format!("{} | mode: {} ", s, "INSERT"),
+            UIMode::View => format!("{} | mode: {} ", view_s, "VIEW"),
+            UIMode::Insert => format!("{} | mode: {} ", view_s, "INSERT"),
+            UIMode::EditName => format!("{} | mode: {} ", edit_s, "EDIT NAME"),
+            UIMode::EditDescription => format!("{} | mode: {} ", edit_s, "EDIT DESCRIPTION"),
         };
 
         Paragraph::new(text).centered().render(area, buf);
@@ -125,7 +209,6 @@ impl UI {
             .border_style(style::TODO_HEADER_STYLE)
             .bg(style::NORMAL_ROW_BG);
 
-        // Iterate through all elements in the `items` and stylize them.
         let items: Vec<ListItem> = self
             .task_list
             .tasks
@@ -137,45 +220,79 @@ impl UI {
             })
             .collect();
 
-        // Create a List from all list items and highlight the currently selected one
         let list = List::new(items)
             .block(block)
             .highlight_style(style::SELECTED_STYLE)
             .highlight_symbol(">")
             .highlight_spacing(HighlightSpacing::Always);
 
-        // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
-        // same method name `render`.
         StatefulWidget::render(list, area, buf, &mut self.task_list.state);
     }
 
     fn render_selected_item(&self, area: Rect, buf: &mut Buffer) {
-        // We get the info depending on the item's state.
-        let info = if let Some(i) = self.task_list.state.selected() {
-            match self.task_list.tasks[i].status {
-                TaskStatus::Done => format!("✓ DONE: {}", self.task_list.tasks[i].description),
-                TaskStatus::Todo => format!("☐ TODO: {}", self.task_list.tasks[i].description),
-                TaskStatus::InProgress => {
-                    format!("◌ IN PROGRESS: {}", self.task_list.tasks[i].description)
-                }
-            }
-        } else {
-            "Nothing selected...".to_string()
-        };
+        let block_title = Line::raw("TODO Info").centered();
+        let mut current_name = "Nothing selected...".to_string();
+        let mut current_description = "".to_string();
+        let mut current_status_prefix = "".to_string();
 
-        // We show the list item's info under the list in this paragraph
+        if let Some(i) = self.task_list.state.selected() {
+            let task = &self.task_list.tasks[i];
+            current_name = task.name.clone();
+            current_description = task.description.clone();
+            current_status_prefix = match task.status {
+                TaskStatus::Done => "✓ DONE".to_string(),
+                TaskStatus::Todo => "☐ TODO".to_string(),
+                TaskStatus::InProgress => "◌ IN PROGRESS".to_string(),
+            };
+        }
+
+        let mut text_to_display = vec![];
+
+        // Name display/edit
+        if self.mode == UIMode::EditName && self.active_edit_field == ActiveEditField::Name {
+            text_to_display.push(Line::styled(
+                format!("Name: {}_", self.input_buffer),
+                Style::default().fg(style::TEXT_FG_COLOR).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            text_to_display.push(Line::styled(
+                format!("Name: {}", current_name),
+                Style::default().fg(style::TEXT_FG_COLOR),
+            ));
+        }
+
+        // Description display/edit
+        if self.mode == UIMode::EditDescription && self.active_edit_field == ActiveEditField::Description {
+            text_to_display.push(Line::styled(
+                format!("Description: {}_", self.input_buffer),
+                Style::default().fg(style::TEXT_FG_COLOR).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            text_to_display.push(Line::styled(
+                format!("Description: {}", current_description),
+                Style::default().fg(style::TEXT_FG_COLOR),
+            ));
+        }
+        
+        // Status (always view only in this pane)
+        if self.task_list.state.selected().is_some() {
+             text_to_display.push(Line::styled(
+                format!("Status: {}", current_status_prefix),
+                Style::default().fg(style::TEXT_FG_COLOR),
+            ));
+        }
+
+
         let block = Block::new()
-            .title(Line::raw("TODO Info").centered())
+            .title(block_title)
             .borders(Borders::TOP)
             .border_set(symbols::border::EMPTY)
             .border_style(style::TODO_HEADER_STYLE)
             .bg(style::NORMAL_ROW_BG)
             .padding(Padding::horizontal(1));
 
-        // We can now render the item info
-        Paragraph::new(info)
+        Paragraph::new(text_to_display)
             .block(block)
-            .fg(style::TEXT_FG_COLOR)
             .wrap(Wrap { trim: false })
             .render(area, buf);
     }
