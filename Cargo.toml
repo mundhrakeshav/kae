@@ -2,6 +2,10 @@
 name = "kae"
 version = "0.1.0"
 edition = "2021"
+description = "A Kae - classic to-do list"
+authors = ["Keshav Mundhra"]
+license = "MIT"
+repository = "https://github.com/mundhrakeshav/kae"
 
 [dependencies]
 anyhow = "1.0.98"
